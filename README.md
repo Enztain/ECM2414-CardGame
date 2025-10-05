@@ -7,8 +7,8 @@ Each player and deck is handled by its own thread, with synchronization ensuring
 ## Project Structure
 src/
 └── main/
-    └── java/
-        └── com/ecm2414/cardgame/app/CardGame.java
+└── java/
+└── com/ecm2414/cardgame/app/CardGame.java
 
 - app/ → main entry point and game controller
 - domain/ → Card, Hand, Deck, Player
