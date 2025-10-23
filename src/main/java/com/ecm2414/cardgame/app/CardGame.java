@@ -1,5 +1,5 @@
 package com.ecm2414.cardgame.app;
-import com.ecm2414.cardgame.data.Card;
+import com.ecm2414.cardgame.Card;
 
 public class CardGame {
     public static void main(String[] args) {

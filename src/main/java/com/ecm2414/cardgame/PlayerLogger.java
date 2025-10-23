@@ -1,4 +1,4 @@
-package com.ecm2414.cardgame.data;
+package com.ecm2414.cardgame;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
