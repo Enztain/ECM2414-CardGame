@@ -1,141 +1,130 @@
 package com.ecm2414.cardgame;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Scanner;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * GameController sets up and runs the multithreaded card game.
+ * It relies on GameConfig to provide the pack and initial hands.
  */
 public class GameController {
 
     private final AtomicBoolean winnerFound = new AtomicBoolean(false);
 
-    public GameController() {
-    }
-
-    /**
-     * Starts the card game using the given configuration.
-     *
-     * @param config the game setup and pack information
-     */
+    /** Starts a new game from the provided configuration. */
     public void startGame(GameConfig config) {
-        int numPlayers = config.getNumPlayers();
+        final int n = config.getNumPlayers();
 
-        // Create decks
-        Deck[] decks = new Deck[numPlayers];
-        for (int i = 0; i < numPlayers; i++) {
-            decks[i] = new Deck(i); // IDs start at 0
+        // Create decks (ids are 1..n for logging/filenames).
+        Deck[] decks = new Deck[n];
+        for (int i = 0; i < n; i++) {
+            decks[i] = new Deck(i + 1);
         }
 
-        // Deal hands
+        // Deal initial hands and fill decks with the remaining cards.
         List<Hand> hands = config.dealInitialHands();
-
-        // Fill decks with remaining cards
         config.fillDecks(decks);
 
-        // Create Player objects
-        Player[] players = new Player[numPlayers];
-        for (int i = 0; i < numPlayers; i++) {
-            Deck leftDeck = decks[i];                   // draw from deck i
-            Deck rightDeck = decks[(i + 1) % numPlayers]; // discard to next deck
-            players[i] = new Player(i + 1, hands.get(i), leftDeck, rightDeck, winnerFound);
+        // Check for immediate winner after the initial deal.
+        int immediateWinner = findImmediateWinner(hands);
+        if (immediateWinner != -1) {
+            System.out.println("player " + immediateWinner + " wins");
+            emitInitialDealLogsAndFinish(immediateWinner, hands, decks);
+            return;
         }
 
-        // Start player threads
-        Thread[] threads = new Thread[numPlayers];
-        for (int i = 0; i < numPlayers; i++) {
-            threads[i] = new Thread(players[i], "Player-" + (i + 1));
-            threads[i].start();
+        // Create player objects & threads.
+        List<Thread> threads = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            int playerId = i + 1;
+            Deck left = decks[i];
+            Deck right = decks[(i + 1) % n];
+            Player p = new Player(playerId, hands.get(i), left, right, winnerFound);
+            Thread t = new Thread(p, "player-" + playerId);
+            threads.add(t);
         }
 
-        // Wait for all threads to finish
+        // Start all players.
+        for (Thread t : threads) t.start();
+
+        // Wait for termination.
         for (Thread t : threads) {
             try {
                 t.join();
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                Thread.currentThread().interrupt();
+                break; // try to finish gracefully
             }
         }
 
-        // Log final deck contents
-        for (Deck d : decks) {
+        // Emit deck logs at the end of the game.
+        writeDeckLogs(decks);
+    }
+
+    /** Returns 1-based player id of a winner if any, otherwise -1. */
+    private int findImmediateWinner(List<Hand> hands) {
+        for (int i = 0; i < hands.size(); i++) {
+            if (isWinningHand(hands.get(i))) {
+                winnerFound.set(true);
+                return i + 1;
+            }
+        }
+        return -1;
+    }
+
+    /** A winning hand is four cards of the same value. */
+    private boolean isWinningHand(Hand hand) {
+        List<Integer> values = hand.getCardValues();
+        if (values.size() != 4) return false;
+        int v0 = values.get(0);
+        return values.get(1) == v0 && values.get(2) == v0 && values.get(3) == v0;
+    }
+
+    /** If someone wins on the initial deal, create the required logs and exit. */
+    private void emitInitialDealLogsAndFinish(int winnerId, List<Hand> hands, Deck[] decks) {
+        // Per spec, create all player output files even on immediate victory.
+        for (int i = 0; i < hands.size(); i++) {
+            int playerId = i + 1;
+            PlayerLogger logger = null;
             try {
-                List<Integer> cardValues = d.getCards().stream()
-                        .map(Card::getValue)
-                        .toList();
-                DeckLogger.logFinalState(d.getId() + 1, cardValues); // deck IDs start at 1
+                logger = PlayerLogger.create(playerId);
+                logger.logInitialHand(hands.get(i).getCardValues());
+                if (playerId == winnerId) {
+                    logger.logWin();
+                    logger.logFinalHand(hands.get(i).getCardValues());
+                } else {
+                    logger.logInformedByWinner(winnerId);
+                    logger.logExit();
+                    logger.logFinalHand(hands.get(i).getCardValues());
+                }
+            } catch (IOException ioe) {
+                ioe.printStackTrace();
+            } finally {
+                if (logger != null) {
+                    try { logger.close(); } catch (IOException ignored) {}
+                }
+            }
+        }
+        writeDeckLogs(decks);
+    }
+
+    /** Writes deckX_output.txt files for each deck. */
+    private void writeDeckLogs(Deck[] decks) {
+        for (Deck d : decks) {
+            // соберём значения карт по порядку (как лежат в очереди)
+            List<Integer> values = new java.util.ArrayList<>();
+            // если у Deck есть метод snapshot/iterator/getCards — используй его;
+            // иначе добавь в Deck публичный метод, который вернёт копию содержимого.
+            for (Card c : d.getCards()) {
+                values.add(c.getValue());
+            }
+            try {
+                DeckLogger.logFinalState(d.getId(), values);
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
-
-
-        System.out.println("=== Game Over ===");
-    }
-
-    /**
-     * Main method: prompts for number of players and pack file, then starts the game.
-     */
-    public static void main(String[] args) {
-        Scanner sc = new Scanner(System.in);
-
-        // Ask number of players
-        int n = 0;
-        while (n <= 0) {
-            System.out.print("Enter number of players: ");
-            if (sc.hasNextInt()) {
-                n = sc.nextInt();
-            } else {
-                sc.next(); // discard invalid input
-            }
-        }
-        sc.nextLine();
-
-        // Ask pack file path
-        Path packPath = null;
-        while (packPath == null) {
-            System.out.print("Enter path to pack file: ");
-            String pathStr = sc.nextLine();
-            Path p = Path.of(pathStr);
-            if (Files.exists(p) && Files.isReadable(p)) {
-                packPath = p;
-            } else {
-                System.out.println("Invalid file path, try again.");
-            }
-        }
-
-        // Read pack file
-        List<Card> pack = new ArrayList<>();
-        try {
-            List<String> lines = Files.readAllLines(packPath);
-            for (String line : lines) {
-                line = line.trim();
-                if (!line.isEmpty()) {
-                    int val = Integer.parseInt(line);
-                    pack.add(new Card(val));
-                }
-            }
-        } catch (IOException | NumberFormatException e) {
-            System.out.println("Failed to read pack file: " + e.getMessage());
-            return;
-        }
-
-        // Validate pack size
-        if (pack.size() != 8 * n) {
-            System.out.println("Invalid pack file. Must contain exactly 8n cards.");
-            return;
-        }
-
-        // Create GameConfig
-        GameConfig config = new GameConfig(n, packPath, pack);
-
-        // Start the game
-        GameController controller = new GameController();
-        controller.startGame(config);
     }
 }

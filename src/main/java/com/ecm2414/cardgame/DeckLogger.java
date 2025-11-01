@@ -39,4 +39,5 @@ public final class DeckLogger {
             writer.newLine();
         }
     }
+
 }
